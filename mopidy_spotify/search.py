@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 
 def search(
     config,
-    session,
-    web_client,
+    api,
     query=None,
     uris=None,
     exact=False,
@@ -22,25 +21,21 @@ def search(
 ):
     # TODO Respect `uris` argument
     # TODO Support `exact` search
-
+    logger.info("Got search request")
     if query is None:
-        logger.debug("Ignored search without query")
+        logger.info("Ignored search without query")
         return models.SearchResult(uri="spotify:search")
 
     if "uri" in query:
-        return _search_by_uri(config, session, web_client, query)
+        return _search_by_uri(config, api, query)
 
     sp_query = translator.sp_search_query(query)
     if not sp_query:
-        logger.debug("Ignored search with empty query")
+        logger.info("Ignored search with empty query")
         return models.SearchResult(uri="spotify:search")
 
     uri = f"spotify:search:{urllib.parse.quote(sp_query)}"
-    logger.info(f"Searching Spotify for: {sp_query}")
-
-    if session.connection.state is not spotify.ConnectionState.LOGGED_IN:
-        logger.info("Spotify search aborted: Spotify is offline")
-        return models.SearchResult(uri=uri)
+    logger.info(f"Searching Spotify for: {sp_query} for types: " + (",".join(types)))
 
     search_count = max(
         config["search_album_count"],
@@ -57,14 +52,11 @@ def search(
         )
         search_count = 50
 
-    result = web_client.get(
-        "search",
-        params={
-            "q": sp_query,
-            "limit": search_count,
-            "market": "from_token",
-            "type": ",".join(types),
-        },
+    result = api.search(
+        q=sp_query,
+        limit=search_count,
+        type=",".join(types),
+        market="from_token",
     )
 
     albums = (
@@ -105,10 +97,10 @@ def search(
     )
 
 
-def _search_by_uri(config, session, web_client, query):
+def _search_by_uri(config, api, query):
     tracks = []
     for uri in query["uri"]:
-        tracks += lookup.lookup(config, session, web_client, uri)
+        tracks += lookup.lookup(config, api, uri)
 
     uri = "spotify:search"
     if len(query["uri"]) == 1:

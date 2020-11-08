@@ -3,26 +3,14 @@ import pathlib
 import threading
 
 import pykka
-from mopidy import backend, httpclient
+from mopidy import backend, httpclient, core
 
-import spotify
-from mopidy_spotify import Extension, library, playback, playlists, web
+from mopidy_spotify import Extension, library, playback, playlists, web, api, connect
 
 logger = logging.getLogger(__name__)
 
 
-BITRATES = {
-    96: spotify.Bitrate.BITRATE_96k,
-    160: spotify.Bitrate.BITRATE_160k,
-    320: spotify.Bitrate.BITRATE_320k,
-}
-
-
-class SpotifyBackend(pykka.ThreadingActor, backend.Backend):
-
-    _logged_in = threading.Event()
-    _logged_out = threading.Event()
-    _logged_out.set()
+class SpotifyBackend(pykka.ThreadingActor, backend.Backend, core.CoreListener):
 
     def __init__(self, config, audio):
         super().__init__()
@@ -30,10 +18,10 @@ class SpotifyBackend(pykka.ThreadingActor, backend.Backend):
         self._config = config
         self._audio = audio
         self._actor_proxy = None
-        self._session = None
         self._event_loop = None
         self._bitrate = None
-        self._web_client = None
+        self._api = api.SpotifyAPI(backend=self)
+        self._connect = connect.SpotifyConnect(backend=self)
 
         self.library = library.SpotifyLibraryProvider(backend=self)
         self.playback = playback.SpotifyPlaybackProvider(
@@ -47,119 +35,21 @@ class SpotifyBackend(pykka.ThreadingActor, backend.Backend):
 
     def on_start(self):
         self._actor_proxy = self.actor_ref.proxy()
-        self._session = self._get_session(self._config)
 
-        self._event_loop = spotify.EventLoop(self._session)
-        self._event_loop.start()
-
-        self._session.login(
-            self._config["spotify"]["username"],
-            self._config["spotify"]["password"],
-        )
-
-        self._web_client = web.SpotifyOAuthClient(
-            client_id=self._config["spotify"]["client_id"],
-            client_secret=self._config["spotify"]["client_secret"],
-            proxy_config=self._config["proxy"],
-        )
-        self._web_client.login()
-
-        if self.playlists is not None:
-            self.playlists.refresh()
+        self._connect.load_device_id()
 
     def on_stop(self):
         logger.debug("Logging out of Spotify")
-        self._session.logout()
-        self._logged_out.wait()
-        self._event_loop.stop()
 
-    def _get_session(self, config):
-        session = spotify.Session(self._get_spotify_config(config))
+    def track_playback_started(self, tl_track):
+        if not self._connect.is_playing():
+            return
 
-        session.connection.allow_network = config["spotify"]["allow_network"]
+        track_uri = ""
+        if tl_track is not None:
+            track_uri = tl_track.track.uri
 
-        self._bitrate = config["spotify"]["bitrate"]
-        session.preferred_bitrate = BITRATES[self._bitrate]
-        session.volume_normalization = config["spotify"]["volume_normalization"]
+        if not track_uri.startswith("spotify:"):
+            logger.info("Stopping Spotify as we should not longer be playing")
+            self._connect.pause()
 
-        backend_actor_proxy = self._actor_proxy
-        session.on(
-            spotify.SessionEvent.CONNECTION_STATE_UPDATED,
-            on_connection_state_changed,
-            self._logged_in,
-            self._logged_out,
-            backend_actor_proxy,
-        )
-        session.on(
-            spotify.SessionEvent.PLAY_TOKEN_LOST,
-            on_play_token_lost,
-            backend_actor_proxy,
-        )
-
-        return session
-
-    def _get_spotify_config(self, config):
-        ext = Extension()
-        spotify_config = spotify.Config()
-
-        spotify_config.load_application_key_file(
-            pathlib.Path(__file__).parent / "spotify_appkey.key"
-        )
-
-        if config["spotify"]["allow_cache"]:
-            spotify_config.cache_location = bytes(ext.get_cache_dir(config))
-        else:
-            spotify_config.cache_location = None
-
-        spotify_config.settings_location = bytes(ext.get_data_dir(config))
-
-        proxy_uri = httpclient.format_proxy(config["proxy"], auth=False)
-        if proxy_uri is not None:
-            logger.debug(f"Connecting to Spotify through proxy: {proxy_uri}")
-
-        spotify_config.proxy = proxy_uri
-        spotify_config.proxy_username = config["proxy"].get("username")
-        spotify_config.proxy_password = config["proxy"].get("password")
-
-        return spotify_config
-
-    def on_logged_in(self):
-        if self._config["spotify"]["private_session"]:
-            logger.info("Spotify private session activated")
-            self._session.social.private_session = True
-
-    def on_play_token_lost(self):
-        if self._session.player.state == spotify.PlayerState.PLAYING:
-            self.playback.pause()
-            logger.warning(
-                "Spotify has been paused because your account is "
-                "being used somewhere else."
-            )
-
-
-def on_connection_state_changed(
-    session, logged_in_event, logged_out_event, backend
-):
-
-    # Called from the pyspotify event loop, and not in an actor context.
-    if session.connection.state is spotify.ConnectionState.LOGGED_OUT:
-        logger.debug("Logged out of Spotify")
-        logged_in_event.clear()
-        logged_out_event.set()
-    elif session.connection.state is spotify.ConnectionState.LOGGED_IN:
-        logger.info("Logged in to Spotify in online mode")
-        logged_in_event.set()
-        logged_out_event.clear()
-        backend.on_logged_in()
-    elif session.connection.state is spotify.ConnectionState.DISCONNECTED:
-        logger.info("Disconnected from Spotify")
-    elif session.connection.state is spotify.ConnectionState.OFFLINE:
-        logger.info("Logged in to Spotify in offline mode")
-        logged_in_event.set()
-        logged_out_event.clear()
-
-
-def on_play_token_lost(session, backend):
-    # Called from the pyspotify event loop, and not in an actor context.
-    logger.debug("Spotify play token lost")
-    backend.on_play_token_lost()

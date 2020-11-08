@@ -33,3 +33,13 @@ def time_logger(name, level=TRACE):
 
 def flatten(list_of_lists):
     return [item for sublist in list_of_lists for item in sublist]
+
+
+def iterate(api, result):
+    if result is None:
+        return
+
+    yield result
+
+    if result.get("next", None) is not None:
+        yield from iterate(api, api.next(result))

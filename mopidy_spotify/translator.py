@@ -215,24 +215,31 @@ def to_playlist(
     as_ref=False,
     as_items=False,
 ):
-    ref = to_playlist_ref(web_playlist, username)
-    if ref is None or as_ref:
-        return ref
+    playlist_ref = to_playlist_ref(web_playlist, username)
+    if playlist_ref is None or as_ref:
+        return playlist_ref
 
-    web_tracks = web_playlist.get("tracks", {}).get("items", [])
+    web_tracks_wrapper = web_playlist.get("tracks", {})
+    web_track_count = web_tracks_wrapper.get("total")
+    web_tracks = web_tracks_wrapper.get("items", [])
     if as_items and not isinstance(web_tracks, list):
         return
 
     if as_items:
-        return list(web_to_track_refs(web_tracks))
+        return list(web_to_track_refs(web_tracks, check_playable=False))
 
-    tracks = [
-        web_to_track(web_track.get("track", {}), bitrate=bitrate)
-        for web_track in web_tracks
-    ]
-    tracks = [t for t in tracks if t]
+    if not isinstance(web_tracks, list):
+        tracks = [
+            models.Track() for i in range(0, web_track_count)
+        ]
+    else:
+        tracks = [
+            web_to_track(web_track.get("track", {}), bitrate=bitrate)
+            for web_track in web_tracks
+        ]
+        tracks = [t for t in tracks if t]
 
-    return models.Playlist(uri=ref.uri, name=ref.name, tracks=tracks)
+    return models.Playlist(uri=playlist_ref.uri, name=playlist_ref.name, tracks=tracks)
 
 
 def to_playlist_ref(web_playlist, username=None):
@@ -319,7 +326,7 @@ def web_to_album(web_album):
 
 
 def web_to_track(web_track, bitrate=None):
-    ref = web_to_track_ref(web_track)
+    ref = web_to_track_ref(web_track, check_playable=False)
     if ref is None:
         return
 

@@ -4,6 +4,8 @@ import operator
 import urllib.parse
 
 from mopidy import models
+from pprint import pprint
+from mopidy_spotify.utils import flatten
 
 # NOTE: This module is independent of libspotify and built using the Spotify
 # Web APIs. As such it does not tie in with any of the regular code used
@@ -17,23 +19,30 @@ _cache = {}  # (type, id) -> [Image(), ...]
 logger = logging.getLogger(__name__)
 
 
-def get_images(web_client, uris):
+def get_images(api, uris):
     result = {}
     uri_type_getter = operator.itemgetter("type")
-    uris = sorted((_parse_uri(u) for u in uris), key=uri_type_getter)
+
+    parsed_uris = (_parse_uri(u) for u in uris)
+    uris = sorted((
+        uri
+        for uri in parsed_uris
+        if uri
+    ), key=uri_type_getter)
+
     for uri_type, group in itertools.groupby(uris, uri_type_getter):
         batch = []
         for uri in group:
             if uri["key"] in _cache:
                 result[uri["uri"]] = _cache[uri["key"]]
             elif uri_type == "playlist":
-                result.update(_process_uri(web_client, uri))
+                result.update(_process_uri(api, uri))
             else:
                 batch.append(uri)
                 if len(batch) >= _API_MAX_IDS_PER_REQUEST:
-                    result.update(_process_uris(web_client, uri_type, batch))
+                    result.update(_process_uris(api, uri_type, batch))
                     batch = []
-        result.update(_process_uris(web_client, uri_type, batch))
+        result.update(_process_uris(api, uri_type, batch))
     return result
 
 
@@ -56,16 +65,17 @@ def _parse_uri(uri):
             "key": (uri_type, uri_id),
         }
 
-    raise ValueError(f"Could not parse {repr(uri)} as a Spotify URI")
+    logger.debug(f"Could not parse {repr(uri)} as a Spotify URI")
+    return None
 
 
-def _process_uri(web_client, uri):
-    data = web_client.get(f"{uri['type']}s/{uri['id']}")
+def _process_uri(api, uri):
+    data = api._get(f"{uri['type']}s/{uri['id']}")
     _cache[uri["key"]] = tuple(_translate_image(i) for i in data["images"])
     return {uri["uri"]: _cache[uri["key"]]}
 
 
-def _process_uris(web_client, uri_type, uris):
+def _process_uris(api, uri_type, uris):
     result = {}
     ids = [u["id"] for u in uris]
     ids_to_uris = {u["id"]: u for u in uris}
@@ -73,8 +83,11 @@ def _process_uris(web_client, uri_type, uris):
     if not uris:
         return result
 
-    data = web_client.get(uri_type + "s", params={"ids": ",".join(ids)})
-    for item in data.get(uri_type + "s", []):
+    data = flatten(
+        api._get(uri_type + "s?ids=" + ",".join(idset)).get(uri_type + "s")
+        for idset in [ids[i:i + 20] for i in range(0, len(ids), 20)]
+    )
+    for item in data:
         if not item:
             continue
 

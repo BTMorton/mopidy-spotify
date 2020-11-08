@@ -18,11 +18,10 @@ class Extension(ext.Extension):
     def get_config_schema(self):
         schema = super().get_config_schema()
 
-        schema["username"] = config.String()
-        schema["password"] = config.Secret()
-
         schema["client_id"] = config.String()
         schema["client_secret"] = config.Secret()
+        schema["refresh_token"] = config.Secret()
+        schema["device_name"] = config.String()
 
         schema["bitrate"] = config.Integer(choices=(96, 160, 320))
         schema["volume_normalization"] = config.Boolean()
@@ -48,4 +47,13 @@ class Extension(ext.Extension):
     def setup(self, registry):
         from mopidy_spotify.backend import SpotifyBackend
 
+        registry.add(
+            "http:app", {"name": "librespot", "factory": librespot_http_factory})
         registry.add("backend", SpotifyBackend)
+
+
+def librespot_http_factory(config, core):
+    from .handlers import LibrespotHttpHandler
+    return [
+        (r".*", LibrespotHttpHandler, {"core": core, "config": config}),
+    ]
