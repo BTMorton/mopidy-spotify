@@ -15,7 +15,7 @@ def lookup(config, api, uri):
     try:
         web_link = web.WebLink.from_uri(uri)
     except ValueError as exc:
-        logger.info(f"Failed to lookup {uri!r}: {exc}")
+        logger.debug(f"Failed to lookup {uri!r}: {exc}")
         return []
 
     if web_link.type == web.LinkType.PLAYLIST:

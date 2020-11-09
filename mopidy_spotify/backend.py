@@ -2,6 +2,8 @@ import logging
 import pathlib
 import threading
 
+from pprint import pprint
+
 import pykka
 from mopidy import backend, httpclient, core
 
@@ -52,4 +54,38 @@ class SpotifyBackend(pykka.ThreadingActor, backend.Backend, core.CoreListener):
         if not track_uri.startswith("spotify:"):
             logger.info("Stopping Spotify as we should not longer be playing")
             self._connect.pause()
+
+    def mute_changed(self, mute):
+        if not self._connect.is_active_device():
+            return
+
+        spotify_volume = self._connect.get_volume()
+        current_volume = self._audio.mixer.get_volume().get()
+
+        if (mute and spotify_volume == 0) or (not mute and spotify_volume == current_volume):
+            return
+
+        logger.info("Mute has changed to: {0}".format(mute))
+
+        if mute:
+            self._connect.set_volume(0)
+        else:
+            self._connect.set_volume(current_volume)
+
+    def volume_changed(self, volume):
+        if not self._connect.is_active_device():
+            return
+
+        spotify_volume = self._connect.get_volume()
+        mute = self._audio.mixer.get_mute().get()
+
+        if (mute and spotify_volume == 0) or (not mute and spotify_volume == volume):
+            return
+
+        logger.info("Volume has changed to: {0}".format(volume))
+
+        if mute:
+            self._connect.set_volume(0)
+        else:
+            self._connect.set_volume(volume)
 

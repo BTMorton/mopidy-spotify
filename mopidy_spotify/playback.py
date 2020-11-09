@@ -78,7 +78,7 @@ class SpotifyPlaybackProvider(backend.PlaybackProvider):
         self._connect.pause()
         return True
 
-    def on_seek_data(self, time_position):
+    def seek(self, time_position):
         logger.debug(f"Audio requested seek to {time_position}")
 
         if time_position == 0 and self._first_seek:

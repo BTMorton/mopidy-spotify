@@ -56,53 +56,81 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
 
             # if it's a start event, stop whatever is playing
             if event == "start":
+                logger.info("Librespot has started. Stopping other playback")
                 await self.core.playback.stop()
+
+                # this will cause Spotify's volume to be updated to match that of mopidy
+                await CoreListener(
+                    "volume_changed",
+                    volume=(await self.core.mixer.get_volume())
+                )
             # if it's a stop event, check if we're active and stop
             elif event == "stop":
-                current_track_uri = await self.get_current_track_uri()
                 current_state = await self.core.playback.get_state()
 
-                if current_state != PlaybackState.STOPPED and current_track_uri.startswith("spotify:"):
+                if current_state != PlaybackState.STOPPED and await self.is_active():
+                    logger.info("Librespot has stopped. Cleaning up")
                     await self.core.playback.stop()
                     AudioListener.send("reached_end_of_stream")
             # on a change event, just trigger a track change
             elif event == "change":
+                logger.info("Librespot has changed to a new track")
                 await self.change_track(track_uri)
             # if we're playing, there are options
             elif event == "playing":
-                current_track_uri = await self.get_current_track_uri()
                 current_state = await self.core.playback.get_state()
 
                 # if we're already playing this track, this is most likely actually a seek event
-                if current_state == PlaybackState.PLAYING and current_track_uri == track_uri:
+                if current_state == PlaybackState.PLAYING and await self.is_active():
+                    logger.info("Received a seek callback from librespot")
+                    # we may get two seek events...
+                    # this is needed when mopidy does the seek
+                    AudioListener.send(
+                        "position_changed",
+                        position=params["positionMS"]
+                    )
+                    # this is needed when spotify does the seek
                     CoreListener.send(
                         "seeked",
                         time_position=params["positionMS"]
                     )
                 # if we're not already playing, just trigger a track change
                 else:
+                    logger.info("Librespot has started playing")
                     await self.change_track(track_uri)
             # a pause also has options
             elif event == "paused":
                 current_state = await self.core.playback.get_state()
-                current_track = await self.core.playback.get_current_tl_track()
-                next_track = await self.core.tracklist.eot_track(current_track)
+                current_tl_track = await self.core.playback.get_current_tl_track()
+                next_track = await self.core.tracklist.eot_track(current_tl_track)
+
+                current_track = getattr(current_tl_track, "track", None)
+                current_track_uri = getattr(current_track, "uri", "")
+
+                position_ms = params["positionMS"]
 
                 # if there is another source active, do nothing
-                if current_track is not None and not current_track.track.uri.startswith("spotify:"):
+                if not current_track_uri.startswith("spotify:"):
+                    logger.debug(
+                        "Received a pause event when Spotify is not playing")
                     None
                 # if we're part-way through a track, this is a user pause
-                elif params["positionMS"] > 0:
-                    self.pause(params["positionMS"])
+                elif position_ms > 0:
+                    logger.info("Received pause from librespot")
+                    await self.pause(position_ms)
                 # if the current state is paused, this is librespot responding to the pause action
                 elif current_state == PlaybackState.PAUSED:
-                    self.trigger_pause(params["positionMS"])
+                    logger.info("Handling modpidy pause event")
+                    await self.trigger_pause(position_ms)
                 # if there is no next track scheduled, we're at the end of the playlist, so pause
                 elif next_track is None:
-                    self.pause(params["positionMS"])
+                    logger.info("Reached end of playlist, pausing")
+                    await self.pause(position_ms)
                 # otherwise, we've hit the end of the track, so we need mopidy to schedule the next one
                 else:
-                    res = self.core.actor_ref.ask(
+                    logger.info(
+                        "Reached end of playback, scheduling next track")
+                    self.core.actor_ref.ask(
                         ProxyCall(
                             attr_path=["playback", "_on_about_to_finish"],
                             args=[],
@@ -111,16 +139,19 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
                     )
             # on a volume event, treat volume 0 as mute and otherwise set the volume
             elif event == "volume_set":
+                volume = params["volume"]
+                logger.info("Received volume update to {0}".format(volume))
+
                 muted = await self.core.mixer.get_mute()
-                volume = data["volume"]
+                current_volume = await self.core.mixer.get_volume()
+
+                if volume > 0 and current_volume != volume:
+                    await self.core.mixer.set_volume(volume)
 
                 if muted and volume > 0:
                     await self.core.mixer.set_mute(False)
                 elif not muted and volume == 0:
                     await self.core.mixer.set_mute(True)
-
-                if volume > 0:
-                    await self.core.mixer.set_volume(data["volume"])
 
             self.handle_result(
                 id=id,
@@ -136,13 +167,10 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
 
     # this is a helper method to lookup the uri of the current track
     async def get_current_track_uri(self):
-        current_track = await self.core.playback.get_current_tl_track()
+        return getattr(await self.core.playback.get_current_track(), "uri", "")
 
-        current_track_uri = ""
-        if current_track is not None and current_track.track is not None:
-            current_track_uri = current_track.track.uri
-
-        return current_track_uri
+    async def is_active(self):
+        return (await self.get_current_track_uri()).startswith("spotify:")
 
     # update mopidy that a track change has occured
     async def change_track(self, uri):
