@@ -124,7 +124,7 @@ def web_to_album_refs(web_albums):
 
 
 @memoized
-def to_track(sp_track, bitrate=None):
+def to_track(sp_track, bitrate=None, context_uri=None):
     if not sp_track.is_loaded:
         return
 
@@ -139,6 +139,11 @@ def to_track(sp_track, bitrate=None):
     artists = [a for a in artists if a]
 
     album = to_album(sp_track.album)
+
+    uri = sp_track.link.uri
+
+    if context_uri is not None:
+        uri = add_context_to_track_uri(uri, context_uri)
 
     return models.Track(
         uri=sp_track.link.uri,
@@ -184,13 +189,16 @@ def to_track_refs(sp_tracks, timeout=None):
             yield ref
 
 
-def web_to_track_ref(web_track, *, check_playable=True):
+def web_to_track_ref(web_track, *, check_playable=True, context_uri=None):
     if not valid_web_data(web_track, "track"):
         return
 
     # Web API track relinking guide says to use original URI.
     # libspotfy will handle any relinking when track is loaded for playback.
     uri = web_track.get("linked_from", {}).get("uri") or web_track["uri"]
+
+    if context_uri is not None:
+        uri = add_context_to_track_uri(uri, context_uri)
 
     if check_playable and not web_track.get("is_playable", False):
         logger.debug(f"{uri!r} is not playable")
@@ -199,11 +207,12 @@ def web_to_track_ref(web_track, *, check_playable=True):
     return models.Ref.track(uri=uri, name=web_track.get("name", uri))
 
 
-def web_to_track_refs(web_tracks, *, check_playable=True):
+def web_to_track_refs(web_tracks, *, check_playable=True, context_uri=None):
     for web_track in web_tracks:
         # The extra level here is to also support "saved track objects".
         web_track = web_track.get("track", web_track)
-        ref = web_to_track_ref(web_track, check_playable=check_playable)
+        ref = web_to_track_ref(
+            web_track, check_playable=check_playable, context_uri=context_uri)
         if ref is not None:
             yield ref
 
@@ -222,11 +231,13 @@ def to_playlist(
     web_tracks_wrapper = web_playlist.get("tracks", {})
     web_track_count = web_tracks_wrapper.get("total")
     web_tracks = web_tracks_wrapper.get("items", [])
+    print("track count {}".format(web_track_count))
+    print(repr(web_tracks))
     if as_items and not isinstance(web_tracks, list):
         return
 
     if as_items:
-        return list(web_to_track_refs(web_tracks, check_playable=False))
+        return list(web_to_track_refs(web_tracks, context_uri=playlist_ref.uri))
 
     if not isinstance(web_tracks, list):
         tracks = [
@@ -234,7 +245,8 @@ def to_playlist(
         ]
     else:
         tracks = [
-            web_to_track(web_track.get("track", {}), bitrate=bitrate)
+            web_to_track(web_track.get("track", {}),
+                         bitrate=bitrate, context_uri=playlist_ref.uri)
             for web_track in web_tracks
         ]
         tracks = [t for t in tracks if t]
@@ -325,8 +337,9 @@ def web_to_album(web_album):
     return models.Album(uri=ref.uri, name=ref.name, artists=artists)
 
 
-def web_to_track(web_track, bitrate=None):
-    ref = web_to_track_ref(web_track, check_playable=False)
+def web_to_track(web_track, bitrate=None, context_uri=None):
+    ref = web_to_track_ref(web_track, check_playable=False,
+                           context_uri=context_uri)
     if ref is None:
         return
 
@@ -347,3 +360,22 @@ def web_to_track(web_track, bitrate=None):
         track_no=web_track.get("track_number"),
         bitrate=bitrate,
     )
+
+CONST_SEPARATOR = "::"
+
+def add_context_to_track_uri(track_uri, context_uri):
+    (track_uri, _) = get_context_from_track_uri(track_uri)
+    return track_uri + CONST_SEPARATOR + context_uri
+
+
+def get_context_from_track_uri(track_uri):
+    if not has_context_uri(track_uri):
+        return (track_uri, None)
+
+    [track_uri, context_uri] = track_uri.split(CONST_SEPARATOR)
+
+    return (track_uri, context_uri)
+
+
+def has_context_uri(track_uri):
+    return CONST_SEPARATOR in track_uri

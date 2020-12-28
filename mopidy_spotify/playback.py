@@ -1,6 +1,7 @@
 import logging
 
-from mopidy import audio, backend
+from mopidy import audio, backend, core
+from mopidy_spotify import translator
 from .connect import SpotifyConnect
 from pprint import pprint
 
@@ -48,13 +49,15 @@ class SpotifyPlaybackProvider(backend.PlaybackProvider):
         if track.uri is None:
             return False
 
+        (track_uri, context_uri) = translator.get_context_from_track_uri(track.uri)
+
         self.audio.stop_playback()
 
         logger.debug(
             "Audio requested change of track; "
             "loading and starting Spotify player"
         )
-        self._connect.play(track.uri)
+        self._connect.play(track_uri, context_uri)
         self.audio.set_metadata(self._connect.current_track())
         return True
 

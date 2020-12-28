@@ -2,6 +2,7 @@ import pathlib
 
 import pkg_resources
 from mopidy import config, ext
+from spotipy import Spotify
 
 __version__ = pkg_resources.get_distribution("Mopidy-Spotify").version
 
@@ -41,15 +42,19 @@ class Extension(ext.Extension):
         schema["search_track_count"] = config.Integer(minimum=0, maximum=200)
 
         schema["toplist_countries"] = config.List(optional=True)
-
+        schema["country"] = config.String(choices=Spotify.country_codes)
+        schema["language"] = config.String(
+            choices=("en", "es", "pt", "zh", "io", "wa", "li", "ii", "an", "ht"))
         return schema
 
     def setup(self, registry):
         from mopidy_spotify.backend import SpotifyBackend
+        from mopidy_spotify.frontend import SpotifyFrontend
 
         registry.add(
             "http:app", {"name": "librespot", "factory": librespot_http_factory})
         registry.add("backend", SpotifyBackend)
+        registry.add("frontend", SpotifyFrontend)
 
 
 def librespot_http_factory(config, core):

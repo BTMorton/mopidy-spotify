@@ -22,8 +22,8 @@ class SpotifyBackend(pykka.ThreadingActor, backend.Backend, core.CoreListener):
         self._actor_proxy = None
         self._event_loop = None
         self._bitrate = None
-        self._api = api.SpotifyAPI(backend=self)
-        self._connect = connect.SpotifyConnect(backend=self)
+        self._api = api.SpotifyAPI(config=config)
+        self._connect = connect.SpotifyConnect(api=self._api, config=config)
 
         self.library = library.SpotifyLibraryProvider(backend=self)
         self.playback = playback.SpotifyPlaybackProvider(
@@ -88,4 +88,3 @@ class SpotifyBackend(pykka.ThreadingActor, backend.Backend, core.CoreListener):
             self._connect.set_volume(0)
         else:
             self._connect.set_volume(volume)
-

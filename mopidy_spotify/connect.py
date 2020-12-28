@@ -1,12 +1,12 @@
 from pprint import pprint
+from spotipy import SpotifyException
 from . import translator
 
 
 class SpotifyConnect:
-    def __init__(self, backend):
-        self._backend = backend
-        self._api = backend._api
-        self._device_name = self._backend._config["spotify"]["device_name"]
+    def __init__(self, api, config):
+        self._api = api
+        self._device_name = config["spotify"]["device_name"]
         self._device_id = None
         self._current_uri = None
 
@@ -66,25 +66,42 @@ class SpotifyConnect:
 
         return translator.web_to_track(playback["item"])
 
-    def play(self, uri=None):
+    def play(self, track_uri=None, context_uri=None, is_error_handler=False):
         playback = self.current_playback()
 
         if playback is not None:
             # if we're already playing the target track, can skip
-            if uri is not None and self._current_uri == uri:
+            if track_uri is not None and self._current_uri == track_uri:
                 return
             # if we're already playing and don't have a target track, can skip
-            if uri is None and playback["is_playing"]:
+            if track_uri is None and playback["is_playing"]:
                 return
 
-        # if we don't have a target track, just start playing here
-        if uri is None:
-            self._api.get_client().transfer_playback(
-                device_id=self._device_id, force_play=True)
-        # otherwise, start playing the target track on this device
-        else:
-            self._api.get_client().start_playback(
-                device_id=self._device_id, uris=[uri])
+        try:
+            # if we don't have a target track, just start playing here
+            if track_uri is None:
+                self._api.get_client().transfer_playback(
+                    device_id=self._device_id, force_play=True)
+            # otherwise, start playing the target track on this device
+            elif context_uri is not None:
+                self._api.get_client().start_playback(
+                    device_id=self._device_id, context_uri=context_uri, offset={"uri": track_uri})
+
+            else:
+                self._api.get_client().start_playback(
+                    device_id=self._device_id, uris=[track_uri])
+        except SpotifyException as err:
+            if is_error_handler:
+                raise err
+
+            if "Device not found" in str(err):
+                self.load_device_id()
+
+            if self._device_id is None:
+                raise err
+            else:
+                self.play(track_uri=track_uri,
+                          context_uri=context_uri, is_error_handler=True)
 
     def pause(self):
         playback = self.current_playback()

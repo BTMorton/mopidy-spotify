@@ -10,6 +10,7 @@ import spotipy
 
 logger = logging.getLogger(__name__)
 
+
 def get_fresh_token(config):
     try:
         logger.debug("authenticating")
@@ -21,6 +22,7 @@ def get_fresh_token(config):
         logger.error('Refreshing the auth token failed: %s', e)
     except ValueError as e:
         logger.error('Decoding the JSON auth token response failed: %s', e)
+
 
 def get_fresh_token_from_spotify(config):
     spotify_token_url = "https://accounts.spotify.com/api/token"
@@ -35,9 +37,10 @@ def get_fresh_token_from_spotify(config):
 def token_is_fresh(sp, access_token_expires):
     return sp is not None and time.monotonic() < access_token_expires - 60
 
+
 class SpotifyAPI:
-    def __init__(self, backend):
-        self.backend = backend
+    def __init__(self, config):
+        self._config = config
         self._sp = None
         self._access_token = None
         self._access_token_expires = None
@@ -47,7 +50,7 @@ class SpotifyAPI:
         if token_is_fresh(self._sp, self._access_token_expires):
             return self._sp
 
-        token_res = get_fresh_token(self.backend._config["spotify"])
+        token_res = get_fresh_token(self._config["spotify"])
         if token_res is None or 'access_token' not in token_res:
             logger.warn('Did not receive authentication token!')
             return None

@@ -35,11 +35,17 @@ def flatten(list_of_lists):
     return [item for sublist in list_of_lists for item in sublist]
 
 
-def iterate(api, result):
+def iterate(api, result, key=None):
+    if key is not None:
+        result = result[key]
+
     if result is None:
         return
 
     yield result
 
     if result.get("next", None) is not None:
-        yield from iterate(api, api.next(result))
+        yield from iterate(api, api.next(result), key)
+
+def locale(config):
+    "{0}_{1}".format(config["language"], config["country"])

@@ -56,7 +56,7 @@ class SpotifyPlaylistsProvider(backend.PlaylistsProvider):
 
 def playlist_lookup(api, uri, bitrate, as_items=False):
     logger.debug(f'Fetching Spotify playlist "{uri!r}"')
-    web_playlist = api.playlist(uri)
+    web_playlist = api.playlist(uri, market="from_token")
 
     if web_playlist == {}:
         logger.error(f"Failed to lookup Spotify playlist URI {uri!r}")

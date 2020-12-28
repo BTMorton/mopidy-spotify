@@ -30,7 +30,7 @@ class SpotifyLibraryProvider(backend.LibraryProvider):
         )
 
     def get_images(self, uris):
-        return images.get_images(self._backend._api.get_client(), uris)
+        return images.get_images(self._backend._api.get_client(), uris, self._config)
 
     def lookup(self, uri):
         return lookup.lookup(

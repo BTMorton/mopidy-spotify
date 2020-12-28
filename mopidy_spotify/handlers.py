@@ -7,6 +7,7 @@ from pykka.messages import ProxyCall
 
 from mopidy.core import PlaybackState, CoreListener
 from mopidy.audio import AudioListener
+from . import api, translator
 
 from pprint import pprint
 
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class LibrespotHttpHandler(tornado.web.RequestHandler):
+    last_update = (None, None)
+
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header(
@@ -27,8 +30,8 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
     def initialize(self, core, config):
         self.core = core
         self.config = config
+        self.api = api.SpotifyAPI(config=config)
         self.ioloop = tornado.ioloop.IOLoop.current()
-        self._state = PlaybackState.STOPPED
 
     # Options request
     # This is a preflight request for CORS requests
@@ -54,13 +57,27 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
             event = params["event"]
             track_uri = "spotify:track:" + params["trackID"]
 
+            if LibrespotHttpHandler.last_update == (event, track_uri):
+                logger.info(
+                    "Skipping update as it's the same as the previous update")
+                self.handle_result(
+                    id=id,
+                    response={"message": "Librespot update handled"},
+                )
+                return
+
+            LibrespotHttpHandler.last_update = (event, track_uri)
+
+            if event != "stop" and (event != "volume_set" or await self.is_active()):
+                await self.update_options_state()
+
             # if it's a start event, stop whatever is playing
             if event == "start":
                 logger.info("Librespot has started. Stopping other playback")
                 await self.core.playback.stop()
 
                 # this will cause Spotify's volume to be updated to match that of mopidy
-                await CoreListener(
+                CoreListener.send(
                     "volume_changed",
                     volume=(await self.core.mixer.get_volume())
                 )
@@ -79,25 +96,29 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
             # if we're playing, there are options
             elif event == "playing":
                 current_state = await self.core.playback.get_state()
+                active = await self.is_active()
+                correct_track = (await self.get_current_track_uri()).startswith(track_uri)
+                logger.info("Received a play update from librespot")
 
-                # if we're already playing this track, this is most likely actually a seek event
-                if current_state == PlaybackState.PLAYING and await self.is_active():
-                    logger.info("Received a seek callback from librespot")
-                    # we may get two seek events...
-                    # this is needed when mopidy does the seek
-                    AudioListener.send(
-                        "position_changed",
-                        position=params["positionMS"]
-                    )
-                    # this is needed when spotify does the seek
-                    CoreListener.send(
-                        "seeked",
-                        time_position=params["positionMS"]
-                    )
-                # if we're not already playing, just trigger a track change
-                else:
-                    logger.info("Librespot has started playing")
+                # if we're already playing this track, this is most likely just a seek event
+                if not active or not correct_track or current_state == PlaybackState.STOPPED:
+                    logger.info("Updating current track")
                     await self.change_track(track_uri)
+                elif correct_track and current_state == PlaybackState.PAUSED:
+                    logger.info("Resuming playback of current track")
+                    await self.core.playback.resume()
+
+                # we may get two seek events...
+                # this is needed when mopidy does the seek
+                AudioListener.send(
+                    "position_changed",
+                    position=params["positionMS"]
+                )
+                # this is needed when spotify does the seek
+                CoreListener.send(
+                    "seeked",
+                    time_position=params["positionMS"]
+                )
             # a pause also has options
             elif event == "paused":
                 current_state = await self.core.playback.get_state()
@@ -172,16 +193,22 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
     async def is_active(self):
         return (await self.get_current_track_uri()).startswith("spotify:")
 
+    async def is_track_playing(self, track_uri):
+        return (await self.get_current_track_uri()).startswith(track_uri)
+
     # update mopidy that a track change has occured
     async def change_track(self, uri):
-        current_track_uri = await self.get_current_track_uri()
-
         # if something else was playing, stop it
-        if not current_track_uri.startswith("spotify:"):
+        if not self.is_active():
             await self.core.playback.stop()
 
         # get the track list entry and play it
-        tl_track = await self.ensure_track_in_tracklist(uri)
+        context_uri = None
+        playback = self.api.get_client().current_playback()
+        if playback is not None and playback["context"] is not None:
+            context_uri = playback["context"]["uri"]
+
+        tl_track = await self.ensure_track_in_tracklist(uri, context_uri)
         await self.core.playback.play(tlid=tl_track.tlid)
 
         # simulate the gstreamer playing event
@@ -205,18 +232,58 @@ class LibrespotHttpHandler(tornado.web.RequestHandler):
         await self.core.playback.set_state(PlaybackState.PAUSED)
 
     # this either gets the track from the track list or adds the track to it so we can play it
-    async def ensure_track_in_tracklist(self, uri):
-        tl_tracks = await self.core.tracklist.filter({"uri": [uri]})
+    async def ensure_track_in_tracklist(self, uri, context_uri=None):
+        tl_tracks = await self.core.tracklist.get_tl_tracks()
+        tl_track = next(
+            (tl_track for tl_track in tl_tracks if tl_track.track.uri.startswith(uri)), False)
 
-        if len(tl_tracks) == 0:
+        if tl_track:
+            return tl_track
+
+        if context_uri is None:
             tl_tracks = await self.core.tracklist.add(uris=[uri])
+            return tl_tracks[0]
 
-        return tl_tracks[0]
+        tracks = await self.core.library.lookup([context_uri])
+        tl_tracks = await self.core.tracklist.add(tracks=tracks[context_uri])
+        return next((tl_track for tl_track in tl_tracks if tl_track.track.uri.startswith(uri)))
+
+    async def update_options_state(self):
+        logger.debug("Updating options during librespot update")
+
+        shuffle = await self.core.tracklist.get_random()
+        repeat = await self.core.tracklist.get_repeat()
+        repeat_one = repeat and await self.core.tracklist.get_single()
+
+        repeat_state = "track" if repeat_one else "context" if repeat else "off"
+
+        client = self.api.get_client()
+        playback = client.current_playback(market="from_token")
+
+        if playback["shuffle_state"] != shuffle:
+            logger.debug("Updating mopidy shuffle state to {0} from {1}".format(
+                playback["shuffle_state"], shuffle))
+            await self.core.tracklist.set_random(playback["shuffle_state"])
+
+        if playback["repeat_state"] != repeat_state:
+            logger.debug("Updating mopidy repeat state to {0} from {1}".format(
+                playback["repeat_state"], repeat_state))
+
+            if playback["repeat_state"] == "off":
+                await self.core.tracklist.set_single(False)
+                await self.core.tracklist.set_repeat(False)
+            elif playback["repeat_state"] == "track":
+                await self.core.tracklist.set_single(True)
+                await self.core.tracklist.set_repeat(True)
+            elif playback["repeat_state"] == "context":
+                await self.core.tracklist.set_single(False)
+                await self.core.tracklist.set_repeat(True)
 
     ##
     # Handle a response from our core
     # This is just our callback from an Async request
     ##
+
     def handle_result(self, *args, **kwargs):
         id = kwargs.get("id", None)
         method = kwargs.get("method", None)

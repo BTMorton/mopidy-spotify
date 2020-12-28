@@ -1,6 +1,7 @@
 import logging
 
 from mopidy_spotify import search
+from mopidy_spotify.utils import flatten, iterate
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,11 @@ def _get_playlist_tracks(config, api):
     if not config["allow_playlists"]:
         return
 
-    for playlist in api.current_user_playlists()["items"]:
-        for track in api.user_playlist_tracks(playlist_id=playlist["id"])["items"]:
+    user_playlists = flatten(
+        data.get("items")
+        for data in iterate(api, api.current_user_playlists())
+    )
+
+    for playlist in user_playlists:
+        for track in api.playlist_tracks(playlist_id=playlist["id"], market="from_token")["items"]:
             yield track

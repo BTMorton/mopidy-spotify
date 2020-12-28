@@ -35,23 +35,28 @@ def lookup(config, api, uri):
 
 
 def _lookup_track(config, api, uri):
-    sp_track = api.track(uri)
+    (track_uri, context_uri) = translator.get_context_from_track_uri(uri)
+    sp_track = api.track(track_uri)
 
-    track = translator.web_to_track(sp_track, bitrate=config["bitrate"])
+    track = translator.web_to_track(
+        sp_track, bitrate=config["bitrate"], context_uri=context_uri)
+
     if track is not None:
         yield track
 
 
 def _lookup_album(config, api, uri):
-    sp_album_tracks = api.album_tracks(uri)["items"]
+    sp_album_tracks = api.album_tracks(uri, market="from_token")["items"]
     for sp_track in sp_album_tracks:
-        track = translator.web_to_track(sp_track, bitrate=config["bitrate"])
+        track = translator.web_to_track(
+            sp_track, bitrate=config["bitrate"], context_uri=uri)
         if track is not None:
             yield track
 
 
 def _lookup_artist(config, api, uri):
-    sp_artist_albums = api.artist_albums(uri)["items"]
+    sp_artist_albums = api.artist_albums(
+        uri, country=config["country"])["items"]
 
     sp_album_tracks = []
     for sp_album in sp_artist_albums:

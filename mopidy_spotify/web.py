@@ -12,7 +12,7 @@ from typing import Optional
 
 import requests
 
-from mopidy_spotify import utils
+from mopidy_spotify import utils, translator
 
 logger = logging.getLogger(__name__)
 
@@ -495,6 +495,7 @@ class WebLink:
 
     @classmethod
     def from_uri(cls, uri):
+        (uri, _) = translator.get_context_from_track_uri(uri)
         parsed_uri = urllib.parse.urlparse(uri)
 
         schemes = ("http", "https")
