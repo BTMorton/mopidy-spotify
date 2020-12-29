@@ -1,6 +1,5 @@
 import logging
 
-import spotify
 from mopidy_spotify import playlists, translator, utils, web
 from pprint import pprint
 
@@ -70,5 +69,5 @@ def _lookup_playlist(config, api, uri):
         api, uri, config["bitrate"]
     )
     if playlist is None:
-        raise spotify.Error("Playlist Web API lookup failed")
+        raise Exception("Playlist Web API lookup failed")
     return playlist.tracks

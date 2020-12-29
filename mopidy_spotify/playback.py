@@ -27,24 +27,6 @@ class SpotifyPlaybackProvider(backend.PlaybackProvider):
     def prepare_change(self):
         pass
 
-    # def _connect_events(self):
-    #     if not self._events_connected:
-    #         self._events_connected = True
-    #         self.backend._session.on(
-    #             spotify.SessionEvent.MUSIC_DELIVERY,
-    #             music_delivery_callback,
-    #             self.audio,
-    #             self._seeking_event,
-    #             self._push_audio_data_event,
-    #             self._buffer_timestamp,
-    #         )
-    #         self.backend._session.on(
-    #             spotify.SessionEvent.END_OF_TRACK,
-    #             end_of_track_callback,
-    #             self._end_of_track_event,
-    #             self.audio,
-    #         )
-
     def change_track(self, track):
         if track.uri is None:
             return False

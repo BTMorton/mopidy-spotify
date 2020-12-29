@@ -3,7 +3,6 @@ import logging
 from datetime import datetime
 from mopidy import models
 from pprint import pprint
-import spotify
 from mopidy_spotify import countries, playlists, translator
 from mopidy_spotify.utils import flatten, iterate, locale
 
@@ -36,12 +35,6 @@ _PLAYLISTS_DIR_CONTENTS = [
     models.Ref.directory(uri="spotify:playlists:featured",
                          name="Featured Playlists"),
 ]
-
-_TOPLIST_TYPES = {
-    "albums": spotify.ToplistType.ALBUMS,
-    "artists": spotify.ToplistType.ARTISTS,
-    "tracks": spotify.ToplistType.TRACKS,
-}
 
 
 def browse(*, config, api, uri):

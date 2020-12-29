@@ -2,7 +2,6 @@ from pprint import pprint
 from spotipy import SpotifyException
 from . import translator
 
-
 class SpotifyConnect:
     def __init__(self, api, config):
         self._api = api
@@ -17,7 +16,7 @@ class SpotifyConnect:
             device
             for device in devices["devices"]
             if device["name"] == self._device_name
-        ))
+        ), None)
 
         if currentDevice == None:
             return
